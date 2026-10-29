@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="assets/style.css?v=2">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -66,8 +66,13 @@
     <section class="card">
       <div class="card-head">
         <h2>Buy–sell range today</h2>
-        <span class="muted">Each bar runs from buying to selling rate · dashed lines = CBSL average</span>
+        <span class="muted">Dashed lines = CBSL average</span>
       </div>
+      <p class="explain">
+        <span class="dot buy"></span><b>Buying</b> is what the bank pays you for 1 USD (when you sell dollars or receive a remittance), so further <b>right</b> is better for you.
+        <span class="dot sell"></span><b>Selling</b> is what you pay the bank for 1 USD, so further <b>left</b> is better.
+        The bar between them is the bank's spread: shorter bars mean smaller margins.
+      </p>
       <div class="chart-box tall"><canvas id="range-chart" aria-label="Buy to sell range per bank"></canvas></div>
     </section>
 
@@ -114,6 +119,6 @@
     </footer>
   </main>
 
-  <script src="assets/app.js"></script>
+  <script src="assets/app.js?v=2"></script>
 </body>
 </html>

@@ -100,6 +100,9 @@ h2 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; f
 .card-head.wrap-row { flex-wrap: wrap; align-items: center; }
 .card-head .muted { font-size: 12px; }
 .foot { font-size: 12px; margin: 10px 0 0; }
+.explain { font-size: 13px; color: var(--text-secondary); margin: -4px 0 12px; max-width: 820px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 4px 0 2px; vertical-align: 0; }
+.dot.buy { background: var(--series-1); } .dot.sell { background: var(--series-2); margin-left: 8px; }
 select {
   font: inherit; font-weight: 600; color: var(--text-primary); background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px;

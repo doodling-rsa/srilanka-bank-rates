@@ -1,5 +1,11 @@
 name: Update rates & deploy
 
+# Two sources of data:
+#  - this workflow (scheduled): scrapes every source GitHub's servers can reach
+#  - scripts/local-update.ps1 on a PC in Sri Lanka: scrapes everything (CBSL, BOC,
+#    Commercial and NTB block foreign data-centre IPs) and pushes data/rates.json
+# Any push to main (code or data) redeploys the site.
+
 on:
   schedule:
     # Sri Lanka is UTC+5:30. Banks publish in the morning and sometimes revise intraday.
@@ -7,7 +13,6 @@ on:
     - cron: "30 9 * * *"   # 15:00 Colombo
   push:
     branches: [main]
-    paths-ignore: ["data/**"]
   workflow_dispatch:
     inputs:
       backfill_days:
@@ -25,37 +30,46 @@ concurrency:
 
 jobs:
   scrape:
+    # Pushes only need a redeploy; scraping happens on schedule / manual runs.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Scrape banks + CBSL
-        run: python scraper/run.py --backfill-days "${{ github.event.inputs.backfill_days || '14' }}"
-      - name: Commit data
+      - name: Scrape and commit
         run: |
           git config user.name "rates-bot"
           git config user.email "rates-bot@users.noreply.github.com"
-          git add data/rates.json
-          git diff --cached --quiet || git commit -m "Rates update $(TZ=Asia/Colombo date +'%Y-%m-%d %H:%M')"
-          git push
+          # Retry against the latest main in case the local PC pushed meanwhile.
+          for attempt in 1 2 3; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            python scraper/run.py --backfill-days "${{ github.event.inputs.backfill_days || '14' }}"
+            git add data/rates.json
+            git diff --cached --quiet && exit 0
+            git commit -q -m "Rates update (GitHub) $(TZ=Asia/Colombo date +'%Y-%m-%d %H:%M')"
+            git push -q origin HEAD:main && exit 0
+            echo "push rejected, retrying ($attempt)"; sleep 10
+          done
+          exit 1
 
   deploy:
     needs: scrape
+    if: ${{ !cancelled() && (needs.scrape.result == 'success' || needs.scrape.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main   # pick up the data commit made by the scrape job
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - name: Assemble site
         run: mkdir _site && cp -r index.html assets data _site/
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

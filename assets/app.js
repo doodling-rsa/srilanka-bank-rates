@@ -214,9 +214,26 @@
     o.plugins.legend.labels.boxWidth = 8;
     o.plugins.legend.labels.filter = (l) => l.datasetIndex > 0;
     o.plugins.tooltip.filter = (t) => t.datasetIndex > 0;
+    o.plugins.tooltip.callbacks.title = (t) => {
+      const b = items[t[0].dataIndex];
+      return b ? `${b.name}${b.stale ? ` (as of ${shortDate(b.cur.date)})` : ""}` : "";
+    };
+    // Horizontal chart: the rate is on x (parsed.y is just the row index).
+    o.plugins.tooltip.callbacks.label = (c) => {
+      const b = items[c.dataIndex];
+      return c.datasetIndex === 1
+        ? ` Buying ${fmt(b.buy)} — bank pays you this per USD`
+        : ` Selling ${fmt(b.sell)} — you pay this per USD`;
+    };
     o.plugins.tooltip.callbacks.afterBody = (t) => {
       const b = items[t[0].dataIndex];
-      return b ? [`Spread: ${fmt(b.spread)}`] : [];
+      if (!b) return [];
+      return [
+        "",
+        `Spread (selling − buying): ${fmt(b.spread)}`,
+        `Buying vs CBSL avg ${fmt(s.cbNow.tt_buy)}: ${signed(b.buyVs)}`,
+        `Selling vs CBSL avg ${fmt(s.cbNow.tt_sell)}: ${signed(b.sellVs)}`,
+      ];
     };
     o.plugins.refLines = {
       lines: [
@@ -366,6 +383,11 @@
     renderBank();
     renderCbsl();
     $("#today-date").textContent = s.latestDate ? longDate(s.latestDate) : "";
+    // Judge freshness from the data itself: several sources are only reachable from some runners.
+    const stale = s.list.filter((b) => b.stale).map((b) => b.short);
+    const cbAgeDays = s.cbNow.date && s.latestDate ? (new Date(s.latestDate) - new Date(s.cbNow.date)) / 864e5 : 0;
+    if (cbAgeDays > 4) stale.unshift("CBSL");
+    $("#status-line").textContent = stale.length ? ` Not updated today: ${stale.join(", ")}.` : "";
   }
 
   function segment(sel, onPick) {
@@ -403,8 +425,6 @@
     const db = state.db;
     const updated = new Date(db.updated);
     $("#updated").textContent = "Updated " + updated.toLocaleString("en-GB", { timeZone: "Asia/Colombo", dateStyle: "medium", timeStyle: "short" }) + " (Colombo time) · " + Object.keys(db.banks).length + " banks + CBSL";
-    const failed = Object.entries(db.status || {}).filter(([, v]) => !v.ok).map(([k]) => (db.banks[k] || { short: k.toUpperCase() }).short);
-    $("#status-line").textContent = failed.length ? ` Last run could not reach: ${failed.join(", ")}.` : "";
 
     const sel = $("#bank-select");
     sel.innerHTML = Object.entries(db.banks).map(([id, b]) => `<option value="${id}">${esc(b.name)}</option>`).join("");
