@@ -29,7 +29,7 @@ try {
         Run git merge -q --ff-only origin/main | Out-Null
 
         $out = Run python scraper/run.py --backfill-days 14
-        Log ($out.Trim() -split "`n" | Where-Object { $_ -match "^(cbsl|\w+ +(TT|FAILED))|wrote" }) -join " | "
+        Log ((($out.Trim() -split "`r?`n") | Where-Object { $_ -match "^(cbsl|\w+ +(TT|FAILED))|wrote" }) -join " | ")
 
         & git diff --quiet -- data/rates.json
         if ($LASTEXITCODE -eq 0) { Log "no changes"; break }
