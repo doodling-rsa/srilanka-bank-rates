@@ -3,43 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>USD/LKR Bank Rates</title>
-  <meta name="description" content="Daily USD to LKR buying and selling rates of Sri Lankan banks, compared with Central Bank of Sri Lanka rates.">
+  <title>LKR Bank Exchange Rates</title>
+  <meta name="description" content="Daily USD, GBP, AUD and SGD to LKR buying and selling rates of Sri Lankan banks, compared with Central Bank of Sri Lanka rates.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=2">
+  <link rel="stylesheet" href="assets/style.css?v=3">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <div>
-        <h1>USD / LKR Bank Rates</h1>
+      <div class="brand">
+        <h1>LKR Bank Rates</h1>
         <p class="sub" id="updated">Loading…</p>
       </div>
       <button id="theme" class="icon-btn" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
     </div>
   </header>
 
-  <main class="wrap">
-    <!-- Headline tiles -->
-    <section class="tiles" id="tiles" aria-label="Today's headline rates"></section>
-
-    <!-- Controls -->
-    <div class="controls">
-      <div class="seg" role="group" aria-label="Rate type">
-        <button data-type="tt" class="on">Telegraphic Transfer (TT)</button>
-        <button data-type="notes">Cash notes</button>
+  <!-- Sticky selector: currency (with CBSL middle rate) + rate type -->
+  <nav class="toolbar" aria-label="Rate options">
+    <div class="wrap toolbar-inner">
+      <div class="cur-tabs" role="tablist" aria-label="Currency" id="cur-tabs"></div>
+      <div class="seg type-seg" role="group" aria-label="Rate type">
+        <button data-type="tt" class="on" title="Telegraphic Transfer: remittances and account transfers">TT transfer</button>
+        <button data-type="notes" title="Cash: physical currency notes">Cash</button>
       </div>
-      <p class="hint">Buying = what the bank pays you for 1 USD · Selling = what you pay for 1 USD</p>
     </div>
+  </nav>
+
+  <main class="wrap">
+    <section class="tiles" id="tiles" aria-label="Today's headline rates"></section>
 
     <!-- Today: table -->
     <section class="card">
       <div class="card-head">
-        <h2>Today's rates by bank</h2>
-        <span class="muted" id="today-date"></span>
+        <div>
+          <h2 id="table-title">Today's rates by bank</h2>
+          <p class="card-sub">Buying = bank pays you per <span class="cur-code">USD</span> · Selling = you pay per <span class="cur-code">USD</span></p>
+        </div>
+        <span class="pill" id="today-date"></span>
       </div>
       <div class="table-scroll">
         <table class="rates" id="rates-table">
@@ -49,37 +53,37 @@
               <th data-sort="buy" class="num">Buying</th>
               <th data-sort="sell" class="num">Selling</th>
               <th data-sort="spread" class="num">Spread</th>
-              <th data-sort="buyVs" class="num" title="Bank buying minus CBSL average TT buying">Buy vs CBSL</th>
-              <th data-sort="sellVs" class="num" title="Bank selling minus CBSL average TT selling">Sell vs CBSL</th>
-              <th data-sort="chg" class="num" title="Change in buying rate since previous record">Day Δ (buy)</th>
-              <th></th>
+              <th data-sort="buyVs" class="num hide-sm" title="Bank buying minus CBSL average TT buying">Buy vs CBSL</th>
+              <th data-sort="sellVs" class="num hide-sm" title="Bank selling minus CBSL average TT selling">Sell vs CBSL</th>
+              <th data-sort="chg" class="num hide-sm" title="Change in buying rate since the bank's previous record">Day Δ</th>
+              <th class="hide-sm"><span class="sr-only">Source</span></th>
             </tr>
           </thead>
           <tbody></tbody>
           <tfoot></tfoot>
         </table>
       </div>
-      <p class="foot muted">Click a bank to see its history. Best rates are marked ★. CBSL row shows the Central Bank's weighted-average TT rates of licensed banks.</p>
+      <p class="foot" id="table-foot"></p>
     </section>
 
     <!-- Today: range chart -->
     <section class="card">
       <div class="card-head">
-        <h2>Buy–sell range today</h2>
-        <span class="muted">Dashed lines = CBSL average</span>
+        <div>
+          <h2>Buy–sell range today</h2>
+          <p class="card-sub">
+            <span class="dot buy"></span>Buying: further <b>right</b> is better for you ·
+            <span class="dot sell"></span>Selling: further <b>left</b> is better · shorter bar = smaller bank margin
+          </p>
+        </div>
       </div>
-      <p class="explain">
-        <span class="dot buy"></span><b>Buying</b> is what the bank pays you for 1 USD (when you sell dollars or receive a remittance), so further <b>right</b> is better for you.
-        <span class="dot sell"></span><b>Selling</b> is what you pay the bank for 1 USD, so further <b>left</b> is better.
-        The bar between them is the bank's spread: shorter bars mean smaller margins.
-      </p>
-      <div class="chart-box tall"><canvas id="range-chart" aria-label="Buy to sell range per bank"></canvas></div>
+      <div class="chart-box" id="range-box"><canvas id="range-chart" aria-label="Buy to sell range per bank"></canvas></div>
     </section>
 
     <!-- Bank history -->
     <section class="card" id="history">
-      <div class="card-head wrap-row">
-        <h2>History: <select id="bank-select" aria-label="Bank"></select></h2>
+      <div class="card-head">
+        <h2>History <select id="bank-select" aria-label="Bank"></select></h2>
         <div class="seg small" role="group" aria-label="Time range" id="range-seg">
           <button data-days="30">1M</button>
           <button data-days="90" class="on">3M</button>
@@ -90,17 +94,17 @@
       </div>
       <div class="stats" id="bank-stats"></div>
       <div class="chart-box"><canvas id="bank-chart" aria-label="Bank rate history versus CBSL"></canvas></div>
-      <p class="foot muted" id="bank-note"></p>
+      <p class="foot" id="bank-note"></p>
       <details>
-        <summary>Show data table · <a href="#" id="csv">Download CSV</a></summary>
+        <summary>Data table · <a href="#" id="csv">Download CSV</a></summary>
         <div class="table-scroll"><table class="rates small" id="hist-table"></table></div>
       </details>
     </section>
 
     <!-- CBSL history -->
     <section class="card">
-      <div class="card-head wrap-row">
-        <h2>Central Bank of Sri Lanka</h2>
+      <div class="card-head">
+        <h2 id="cbsl-title">Central Bank of Sri Lanka</h2>
         <div class="seg small" role="group" aria-label="Time range" id="cbsl-range-seg">
           <button data-days="30">1M</button>
           <button data-days="90">3M</button>
@@ -108,17 +112,18 @@
           <button data-days="0">All</button>
         </div>
       </div>
-      <div class="chart-box"><canvas id="cbsl-chart" aria-label="CBSL USD/LKR history"></canvas></div>
-      <p class="foot muted">Middle rate = CBSL indicative spot rate. TT buy/sell = weighted average of licensed commercial banks. Source: <a href="https://www.cbsl.gov.lk/en/rates-and-indicators/exchange-rates" target="_blank" rel="noopener">cbsl.gov.lk</a></p>
+      <div class="chart-box"><canvas id="cbsl-chart" aria-label="CBSL rate history"></canvas></div>
+      <p class="foot">Middle rate = CBSL indicative spot rate. TT buy/sell = weighted average of licensed commercial banks. Source: <a href="https://www.cbsl.gov.lk/en/rates-and-indicators/exchange-rates" target="_blank" rel="noopener">cbsl.gov.lk</a></p>
     </section>
 
-    <footer class="muted">
-      Rates are indicative, scraped from each bank's public website once or twice a day, and may differ from branch rates.
+    <footer>
+      Rates are indicative, collected from each bank's public website twice a day, and may differ from branch rates.
       Bank history starts from the first day this site collected it; CBSL history is backfilled.
       <span id="status-line"></span>
+      <a href="https://github.com/doodling-rsa/usd-lkr-rates" target="_blank" rel="noopener">Source code</a>
     </footer>
   </main>
 
-  <script src="assets/app.js?v=2"></script>
+  <script src="assets/app.js?v=3"></script>
 </body>
 </html>

@@ -1,9 +1,10 @@
-/* USD/LKR dashboard. Reads data/rates.json (written by scraper/run.py). */
+/* LKR bank-rates dashboard. Reads data/rates.json (written by scraper/run.py). */
 (() => {
   "use strict";
 
   const state = {
     db: null,
+    cur: "USD",
     type: "tt",                  // "tt" | "notes"
     sort: { key: "buy", dir: -1 },
     bank: null,
@@ -23,29 +24,50 @@
   const longDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
   const avg = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} },
+  };
 
   const buyKey = () => state.type + "_buy";
   const sellKey = () => state.type + "_sell";
+  const typeName = () => (state.type === "tt" ? "TT" : "cash");
+
+  // v1 files were USD-only (cbsl: rows, rates[bank]: rows); lift them into the per-currency shape.
+  function normalize(db) {
+    if (db.version === 2) return db;
+    return {
+      ...db,
+      version: 2,
+      cbsl: { USD: db.cbsl || [] },
+      rates: Object.fromEntries(Object.entries(db.rates || {}).map(([b, r]) => [b, { USD: r }])),
+      currencies: { USD: { name: "US Dollar", symbol: "$" } },
+    };
+  }
 
   function rows(arr, fields) {
-    return arr.map((r) => Object.fromEntries(fields.map((f, i) => [f, r[i]])));
+    return (arr || []).map((r) => Object.fromEntries(fields.map((f, i) => [f, r[i]])));
   }
-  const cbslRows = () => rows(state.db.cbsl, state.db.fields.cbsl);
-  const bankRows = (id) => rows(state.db.rates[id] || [], state.db.fields.rates);
+  const cbslRows = (cur = state.cur) => rows(state.db.cbsl[cur], state.db.fields.cbsl);
+  const bankRows = (id, cur = state.cur) => rows((state.db.rates[id] || {})[cur], state.db.fields.rates);
   const cutoff = (days) => {
     if (!days) return "0000-00-00";
     const d = new Date(); d.setDate(d.getDate() - days);
     return d.toISOString().slice(0, 10);
   };
 
-  // ---------- derived "today" snapshot ----------
+  // ---------- derived "today" snapshot for the selected currency ----------
   function snapshot() {
     const db = state.db;
     const cb = cbslRows();
     const cbNow = cb[cb.length - 1] || {};
     const cbPrev = cb[cb.length - 2] || {};
-    const latestDate = Object.values(db.rates).reduce((m, r) => (r.length && r[r.length - 1][0] > m ? r[r.length - 1][0] : m), "");
-    const list = Object.entries(db.banks).map(([id, meta]) => {
+    // Latest date any bank reported (any currency) = "today" for staleness.
+    let latestDate = "";
+    Object.values(db.rates).forEach((byCur) => Object.values(byCur).forEach((r) => {
+      if (r.length && r[r.length - 1][0] > latestDate) latestDate = r[r.length - 1][0];
+    }));
+    const all = Object.entries(db.banks).map(([id, meta]) => {
       const r = bankRows(id);
       const cur = r[r.length - 1];
       const prev = r[r.length - 2];
@@ -58,58 +80,75 @@
         sellVs: sell && cbNow.tt_sell ? sell - cbNow.tt_sell : null,
         chg: buy && prev && prev[buyKey()] ? buy - prev[buyKey()] : null,
         stale: !cur || cur.date !== latestDate,
-        status: (db.status || {})[id],
       };
     });
-    const withBuy = list.filter((b) => b.buy && !b.stale);
-    const withSell = list.filter((b) => b.sell && !b.stale);
-    const bestBuy = withBuy.reduce((a, b) => (!a || b.buy > a.buy ? b : a), null);
-    const bestSell = withSell.reduce((a, b) => (!a || b.sell < a.sell ? b : a), null);
-    return { cbNow, cbPrev, list, latestDate, bestBuy, bestSell };
+    const list = all.filter((b) => b.cur);
+    const notQuoted = all.filter((b) => !b.cur);
+    const fresh = list.filter((b) => !b.stale);
+    const bestBuy = fresh.filter((b) => b.buy).reduce((a, b) => (!a || b.buy > a.buy ? b : a), null);
+    const bestSell = fresh.filter((b) => b.sell).reduce((a, b) => (!a || b.sell < a.sell ? b : a), null);
+    return { cbNow, cbPrev, list, notQuoted, latestDate, bestBuy, bestSell };
+  }
+
+  // ---------- currency tabs ----------
+  function renderCurTabs() {
+    const db = state.db;
+    $("#cur-tabs").innerHTML = Object.entries(db.currencies).map(([code, c]) => {
+      const cb = db.cbsl[code] || [];
+      const last = cb[cb.length - 1], prev = cb[cb.length - 2];
+      const chg = last && prev && last[1] && prev[1] ? last[1] - prev[1] : null;
+      return `<button class="cur-tab" role="tab" data-cur="${code}" aria-selected="${code === state.cur}" title="${esc(c.name)}">
+        <span class="code">${code}<small>${esc(c.symbol)}</small></span>
+        <span class="rate">${last ? fmt(last[1]) : "—"} <span class="${cls(chg, false)}">${chg == null ? "" : chg > 0 ? "▲" : chg < 0 ? "▼" : ""}</span></span>
+      </button>`;
+    }).join("");
+    $$("#cur-tabs .cur-tab").forEach((b) => b.addEventListener("click", () => setCurrency(b.dataset.cur)));
+  }
+
+  function setCurrency(code) {
+    state.cur = code;
+    store.set("cur", code);
+    writeHash();
+    $$("#cur-tabs .cur-tab").forEach((b) => b.setAttribute("aria-selected", b.dataset.cur === code));
+    renderAll();
   }
 
   // ---------- tiles ----------
   function renderTiles(s) {
-    const { cbNow, cbPrev, bestBuy, bestSell, list } = s;
+    const { cbNow, cbPrev, bestBuy, bestSell } = s;
+    const c = state.cur;
     const midChg = cbNow.mid && cbPrev.mid ? cbNow.mid - cbPrev.mid : null;
-    const spreads = list.filter((b) => b.spread && !b.stale).map((b) => b.spread);
-    const typeName = state.type === "tt" ? "TT" : "cash";
-    // A rising USD/LKR = rupee weakening; colour the change neutrally-informative: up = red for LKR holders.
+    // A rising rate = rupee weakening, shown red.
     $("#tiles").innerHTML = `
       <div class="tile">
-        <div class="label">CBSL middle rate</div>
-        <div class="value">${fmt(cbNow.mid, 4)}</div>
-        <div class="meta"><span class="${cls(midChg, false)}">${signed(midChg, 4)}</span> vs prev · ${cbNow.date ? shortDate(cbNow.date) : ""}</div>
+        <div class="label">CBSL middle rate · 1 ${c}</div>
+        <div class="value">${fmt(cbNow.mid, 2)}</div>
+        <div class="meta"><span class="chip ${cls(midChg, false)}">${signed(midChg, 2)}</span> vs prev<span class="hide-xs">ious</span> · ${cbNow.date ? shortDate(cbNow.date) : ""}</div>
       </div>
       <div class="tile">
         <div class="label">CBSL avg TT buy / sell</div>
-        <div class="value">${fmt(cbNow.tt_buy)} <span class="muted">/</span> ${fmt(cbNow.tt_sell)}</div>
-        <div class="meta">Weighted average of licensed banks</div>
+        <div class="value">${fmt(cbNow.tt_buy)}<span class="sep">/</span>${fmt(cbNow.tt_sell)}</div>
+        <div class="meta">Average of licensed banks</div>
       </div>
       <div class="tile highlight">
-        <div class="label">Best to sell your USD</div>
+        <div class="label">Best to sell your ${c}</div>
         <div class="value">${fmt(bestBuy && bestBuy.buy)}</div>
-        <div class="meta">${bestBuy ? esc(bestBuy.name) : "—"} · highest ${typeName} buying</div>
+        <div class="meta">${bestBuy ? esc(bestBuy.name) : "—"}<span class="hide-xs"> · highest ${typeName()} buying</span></div>
       </div>
       <div class="tile highlight">
-        <div class="label">Best to buy USD</div>
+        <div class="label">Best to buy ${c}</div>
         <div class="value">${fmt(bestSell && bestSell.sell)}</div>
-        <div class="meta">${bestSell ? esc(bestSell.name) : "—"} · lowest ${typeName} selling</div>
-      </div>
-      <div class="tile">
-        <div class="label">Avg bank spread</div>
-        <div class="value">${fmt(avg(spreads))}</div>
-        <div class="meta">Selling − buying, ${typeName}</div>
+        <div class="meta">${bestSell ? esc(bestSell.name) : "—"}<span class="hide-xs"> · lowest ${typeName()} selling</span></div>
       </div>`;
   }
 
   // ---------- today table ----------
   function renderTable(s) {
-    const { list, bestBuy, bestSell, cbNow } = s;
+    const { list, bestBuy, bestSell, cbNow, notQuoted } = s;
     const { key, dir } = state.sort;
     const sorted = [...list].sort((a, b) => {
-      const av = a[key], bv = b[key];
       if (key === "name") return dir * a.short.localeCompare(b.short);
+      const av = a[key], bv = b[key];
       if (av == null) return 1;
       if (bv == null) return -1;
       return dir * (av - bv);
@@ -119,30 +158,33 @@
       th.classList.toggle("asc", th.dataset.sort === key && dir === 1);
     });
     $("#rates-table tbody").innerHTML = sorted.map((b) => {
-      const badge = !b.cur
-        ? `<span class="badge warn" title="${esc((b.status && b.status.error) || "")}">no data</span>`
-        : b.stale ? `<span class="badge warn" title="Latest fetch failed; showing ${b.cur.date}">stale · ${shortDate(b.cur.date)}</span>`
-        : `<a href="${esc(b.url)}" target="_blank" rel="noopener" class="badge" onclick="event.stopPropagation()">source ↗</a>`;
+      const staleBadge = b.stale ? `<span class="badge warn" title="Latest fetch failed; showing ${b.cur.date}">${shortDate(b.cur.date)}</span>` : "";
       return `<tr data-id="${b.id}" class="${b.id === state.bank ? "selected" : ""}">
-        <td><span class="bank-name">${esc(b.short)}</span><span class="bank-full">${esc(b.name)}</span></td>
+        <td><span class="bank-name">${esc(b.short)}</span><span class="bank-full">${esc(b.name)}</span>${staleBadge}</td>
         <td class="num ${bestBuy && b.id === bestBuy.id ? "best" : ""}">${fmt(b.buy)}</td>
         <td class="num ${bestSell && b.id === bestSell.id ? "best" : ""}">${fmt(b.sell)}</td>
         <td class="num">${fmt(b.spread)}</td>
-        <td class="num ${cls(b.buyVs, true)}">${signed(b.buyVs)}</td>
-        <td class="num ${cls(b.sellVs, false)}">${signed(b.sellVs)}</td>
-        <td class="num">${signed(b.chg)}</td>
-        <td>${badge}</td>
+        <td class="num hide-sm ${cls(b.buyVs, true)}">${signed(b.buyVs)}</td>
+        <td class="num hide-sm ${cls(b.sellVs, false)}">${signed(b.sellVs)}</td>
+        <td class="num hide-sm">${signed(b.chg)}</td>
+        <td class="hide-sm"><a href="${esc(b.url)}" target="_blank" rel="noopener" class="badge" title="Open ${esc(b.name)} rates page">source ↗</a></td>
       </tr>`;
     }).join("");
+    const cbSpread = cbNow.tt_sell && cbNow.tt_buy ? cbNow.tt_sell - cbNow.tt_buy : null;
     $("#rates-table tfoot").innerHTML = `<tr>
-      <td>CBSL average (TT)</td>
-      <td class="num">${fmt(cbNow.tt_buy)}</td><td class="num">${fmt(cbNow.tt_sell)}</td>
-      <td class="num">${fmt(cbNow.tt_sell && cbNow.tt_buy ? cbNow.tt_sell - cbNow.tt_buy : null)}</td>
-      <td class="num muted" colspan="2">Middle rate ${fmt(cbNow.mid, 4)}</td><td></td><td></td></tr>`;
-    $$("#rates-table tbody tr").forEach((tr) => tr.addEventListener("click", () => {
+      <td>CBSL avg (TT)</td>
+      <td class="num">${fmt(cbNow.tt_buy)}</td><td class="num">${fmt(cbNow.tt_sell)}</td><td class="num">${fmt(cbSpread)}</td>
+      <td class="num hide-sm" colspan="2" style="text-align:center;font-weight:500">Middle rate ${fmt(cbNow.mid, 4)}</td>
+      <td class="hide-sm"></td><td class="hide-sm"></td></tr>`;
+    $$("#rates-table tbody tr").forEach((tr) => tr.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return;
       selectBank(tr.dataset.id);
       $("#history").scrollIntoView({ behavior: "smooth", block: "start" });
     }));
+    const notes = ["Tap a bank for its history. ★ = best rate today."];
+    if (notQuoted.length) notes.push(`${notQuoted.map((b) => b.name).join(", ")} ${notQuoted.length > 1 ? "don't" : "doesn't"} publish ${state.cur} rates.`);
+    if (state.type === "notes") notes.push("Some banks only publish TT rates, shown as —.");
+    $("#table-foot").textContent = notes.join(" ");
   }
 
   // ---------- chart defaults ----------
@@ -156,11 +198,11 @@
       animation: { duration: 250 },
       interaction: { mode: "index", intersect: false },
       plugins: {
-        legend: { position: "top", align: "start", labels: { usePointStyle: true, pointStyle: "line", boxWidth: 24, color: sec } },
+        legend: { position: "top", align: "start", labels: { usePointStyle: true, pointStyle: "line", boxWidth: 24, color: sec, padding: 14 } },
         tooltip: {
           backgroundColor: css("--surface-1"), titleColor: css("--text-primary"), bodyColor: sec,
-          borderColor: css("--border"), borderWidth: 1, padding: 10, usePointStyle: true,
-          callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.parsed.y ?? c.parsed.x, 4)}` },
+          borderColor: css("--border"), borderWidth: 1, padding: 10, usePointStyle: true, boxPadding: 4,
+          callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.parsed.y, 4)}` },
         },
       },
       scales: {
@@ -177,6 +219,7 @@
     if (charts[id]) charts[id].destroy();
     charts[id] = new Chart(document.getElementById(id), config);
   }
+  const isNarrow = () => matchMedia("(max-width: 480px)").matches;
 
   // Vertical reference lines (CBSL buy/sell) on the range chart.
   const refLines = {
@@ -190,7 +233,7 @@
         ctx.strokeStyle = l.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
         ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
         ctx.setLineDash([]); ctx.fillStyle = l.color; ctx.font = "500 11px Inter, sans-serif";
-        ctx.textAlign = l.align || "center"; ctx.fillText(l.label, px + (l.align === "left" ? 4 : l.align === "right" ? -4 : 0), a.top - 6);
+        ctx.textAlign = l.align; ctx.fillText(l.label, px + (l.align === "left" ? 4 : -4), a.bottom + 14);
       });
       ctx.restore();
     },
@@ -199,20 +242,21 @@
   // ---------- range (dumbbell) chart ----------
   function renderRange(s) {
     const items = s.list.filter((b) => b.buy && b.sell).sort((a, b) => b.buy - a.buy);
-    const labels = items.map((b) => b.short + (b.stale ? " (stale)" : ""));
-    const c1 = css("--series-1"), c2 = css("--series-2"), ref = css("--ref"), grid = css("--border");
+    // Height follows the number of banks so rows never get cramped.
+    $("#range-box").style.height = `${Math.max(220, items.length * 32 + 90)}px`;
+    const labels = items.map((b) => b.short);
+    const c1 = css("--series-1"), c2 = css("--series-2"), ref = css("--ref");
     const o = baseOptions();
     o.indexAxis = "y";
     o.interaction = { mode: "index", axis: "y", intersect: false };
-    o.layout = { padding: { top: 18, right: 40, left: 8 } };
-    const vals = items.flatMap((b) => [b.buy, b.sell]).concat([s.cbNow.tt_buy, s.cbNow.tt_sell]).filter(Boolean);
+    o.layout = { padding: { bottom: 18, right: 8 } };
+    // Bars default to a zero baseline; let Chart.js pick nice bounds around the rate band instead.
     o.scales = {
-      x: { position: "top", min: Math.floor(Math.min(...vals) - 1), max: Math.ceil(Math.max(...vals) + 1), grid: { color: css("--grid") }, ticks: { color: css("--text-muted"), callback: (v) => fmt(v, 0) }, border: { display: false } },
+      x: { position: "top", beginAtZero: false, grace: "4%",
+        grid: { color: css("--grid") }, ticks: { color: css("--text-muted"), callback: (v) => fmt(v, 0), maxTicksLimit: isNarrow() ? 5 : 10 }, border: { display: false } },
       y: { grid: { display: false }, ticks: { color: css("--text-primary"), font: { weight: 600 } }, border: { display: false } },
     };
-    o.plugins.legend.labels.pointStyle = "circle";
-    o.plugins.legend.labels.boxWidth = 8;
-    o.plugins.legend.labels.filter = (l) => l.datasetIndex > 0;
+    o.plugins.legend.display = false;
     o.plugins.tooltip.filter = (t) => t.datasetIndex > 0;
     o.plugins.tooltip.callbacks.title = (t) => {
       const b = items[t[0].dataIndex];
@@ -222,8 +266,8 @@
     o.plugins.tooltip.callbacks.label = (c) => {
       const b = items[c.dataIndex];
       return c.datasetIndex === 1
-        ? ` Buying ${fmt(b.buy)} — bank pays you this per USD`
-        : ` Selling ${fmt(b.sell)} — you pay this per USD`;
+        ? ` Buying ${fmt(b.buy)}: bank pays you this per ${state.cur}`
+        : ` Selling ${fmt(b.sell)}: you pay this per ${state.cur}`;
     };
     o.plugins.tooltip.callbacks.afterBody = (t) => {
       const b = items[t[0].dataIndex];
@@ -247,7 +291,7 @@
       data: {
         labels,
         datasets: [
-          { label: "Range", data: items.map((b) => [b.buy, b.sell]), backgroundColor: grid, borderRadius: 4, borderSkipped: false, barThickness: 6 },
+          { label: "Range", data: items.map((b) => [b.buy, b.sell]), backgroundColor: css("--border"), borderRadius: 4, borderSkipped: false, barThickness: 6 },
           { ...pt, label: "Buying", data: items.map((b, i) => ({ x: b.buy, y: labels[i] })), backgroundColor: c1 },
           { ...pt, label: "Selling", data: items.map((b, i) => ({ x: b.sell, y: labels[i] })), backgroundColor: c2 },
         ],
@@ -261,7 +305,7 @@
   function selectBank(id) {
     state.bank = id;
     $("#bank-select").value = id;
-    history.replaceState(null, "", "#bank=" + id);
+    writeHash();
     $$("#rates-table tbody tr").forEach((tr) => tr.classList.toggle("selected", tr.dataset.id === id));
     renderBank();
   }
@@ -270,7 +314,8 @@
     const id = state.bank;
     const meta = state.db.banks[id];
     const from = cutoff(state.days);
-    const br = bankRows(id).filter((r) => r.date >= from);
+    const allRows = bankRows(id);
+    const br = allRows.filter((r) => r.date >= from);
     const cb = cbslRows().filter((r) => r.date >= from);
     const cbBy = Object.fromEntries(cb.map((r) => [r.date, r]));
     const bBy = Object.fromEntries(br.map((r) => [r.date, r]));
@@ -282,44 +327,43 @@
     const o = baseOptions();
     o.scales.x.ticks.callback = function (v) { return shortDate(this.getLabelForValue(v)); };
     o.plugins.tooltip.callbacks.title = (t) => longDate(t[0].label);
-    const tName = state.type === "tt" ? "TT" : "cash";
+    if (isNarrow()) o.plugins.legend.labels.boxWidth = 14;
     draw("bank-chart", {
       type: "line",
       data: {
         labels: dates,
         datasets: [
-          lineDs(`${meta.short} ${tName} buying`, pick(bBy, bk), c1),
-          lineDs(`${meta.short} ${tName} selling`, pick(bBy, sk), c2),
-          lineDs("CBSL avg TT buying", pick(cbBy, "tt_buy"), ref, { borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 }),
-          lineDs("CBSL avg TT selling", pick(cbBy, "tt_sell"), ref, { borderDash: [2, 3], borderWidth: 1.5, pointRadius: 0 }),
-          lineDs("CBSL middle", pick(cbBy, "mid"), ref, { borderWidth: 1, pointRadius: 0, borderDash: [1, 0] }),
+          lineDs(`${meta.short} buying`, pick(bBy, bk), c1),
+          lineDs(`${meta.short} selling`, pick(bBy, sk), c2),
+          lineDs("CBSL avg buying", pick(cbBy, "tt_buy"), ref, { borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 }),
+          lineDs("CBSL avg selling", pick(cbBy, "tt_sell"), ref, { borderDash: [2, 3], borderWidth: 1.5, pointRadius: 0 }),
+          lineDs("CBSL middle", pick(cbBy, "mid"), ref, { borderWidth: 1, pointRadius: 0 }),
         ],
       },
       options: o,
     });
 
-    // stats
     const buys = br.map((r) => r[bk]).filter(Boolean);
     const spreads = br.filter((r) => r[bk] && r[sk]).map((r) => r[sk] - r[bk]);
     const prem = br.filter((r) => r[bk] && cbBy[r.date] && cbBy[r.date].tt_buy).map((r) => r[bk] - cbBy[r.date].tt_buy);
     const premS = br.filter((r) => r[sk] && cbBy[r.date] && cbBy[r.date].tt_sell).map((r) => r[sk] - cbBy[r.date].tt_sell);
     const last = br[br.length - 1] || {};
     $("#bank-stats").innerHTML = [
-      ["Latest buy / sell", `${fmt(last[bk])} / ${fmt(last[sk])}`],
+      [`Latest ${typeName()} buy / sell`, `${fmt(last[bk])} / ${fmt(last[sk])}`],
       ["Avg spread", fmt(avg(spreads))],
       ["Avg buy vs CBSL", signed(avg(prem))],
       ["Avg sell vs CBSL", signed(avg(premS))],
       ["Buy range", buys.length ? `${fmt(Math.min(...buys))} – ${fmt(Math.max(...buys))}` : "—"],
-      ["Days tracked", String(bankRows(id).length)],
+      ["Days tracked", String(allRows.length)],
     ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
 
-    const all = bankRows(id);
-    $("#bank-note").innerHTML = all.length < 7
-      ? `Bank history is collected daily from ${all.length ? longDate(all[0].date) : "today"} onwards — the chart fills in over time. CBSL lines are backfilled.`
-      : `Source: <a href="${esc(meta.url)}" target="_blank" rel="noopener">${esc(meta.name)} website</a>`;
+    $("#bank-note").innerHTML = !allRows.length
+      ? `${esc(meta.name)} doesn't publish ${state.cur} rates. CBSL lines are shown for reference.`
+      : allRows.length < 7
+        ? `Bank history is collected daily from ${longDate(allRows[0].date)}, so this chart fills in over time. CBSL lines are backfilled.`
+        : `Source: <a href="${esc(meta.url)}" target="_blank" rel="noopener">${esc(meta.name)} website</a>`;
 
-    // table view (newest first)
-    const head = `<thead><tr><th>Date</th><th class="num">TT buy</th><th class="num">TT sell</th><th class="num">Cash buy</th><th class="num">Cash sell</th><th class="num">CBSL TT buy</th><th class="num">CBSL TT sell</th><th class="num">CBSL mid</th></tr></thead>`;
+    const head = `<thead><tr><th>Date</th><th class="num">TT buy</th><th class="num">TT sell</th><th class="num">Cash buy</th><th class="num">Cash sell</th><th class="num">CBSL buy</th><th class="num">CBSL sell</th><th class="num">CBSL mid</th></tr></thead>`;
     const body = [...dates].reverse().filter((d) => bBy[d]).map((d) => {
       const r = bBy[d], c = cbBy[d] || {};
       return `<tr><td>${d}</td><td class="num">${fmt(r.tt_buy)}</td><td class="num">${fmt(r.tt_sell)}</td><td class="num">${fmt(r.notes_buy)}</td><td class="num">${fmt(r.notes_sell)}</td><td class="num">${fmt(c.tt_buy)}</td><td class="num">${fmt(c.tt_sell)}</td><td class="num">${fmt(c.mid, 4)}</td></tr>`;
@@ -329,16 +373,16 @@
 
   function downloadCsv(e) {
     e.preventDefault();
-    const id = state.bank;
+    const id = state.bank, cur = state.cur;
     const cbBy = Object.fromEntries(cbslRows().map((r) => [r.date, r]));
-    const lines = ["date,tt_buy,tt_sell,cash_buy,cash_sell,cbsl_tt_buy,cbsl_tt_sell,cbsl_mid"];
+    const lines = ["date,currency,tt_buy,tt_sell,cash_buy,cash_sell,cbsl_tt_buy,cbsl_tt_sell,cbsl_mid"];
     bankRows(id).forEach((r) => {
       const c = cbBy[r.date] || {};
-      lines.push([r.date, r.tt_buy, r.tt_sell, r.notes_buy, r.notes_sell, c.tt_buy, c.tt_sell, c.mid].map((v) => v ?? "").join(","));
+      lines.push([r.date, cur, r.tt_buy, r.tt_sell, r.notes_buy, r.notes_sell, c.tt_buy, c.tt_sell, c.mid].map((v) => v ?? "").join(","));
     });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-    a.download = `usd-lkr-${id}.csv`;
+    a.download = `${cur.toLowerCase()}-lkr-${id}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -346,10 +390,11 @@
   // ---------- CBSL chart ----------
   function renderCbsl() {
     const cb = cbslRows().filter((r) => r.date >= cutoff(state.cbslDays));
+    $("#cbsl-title").textContent = `Central Bank of Sri Lanka · ${state.cur}/LKR`;
     const o = baseOptions();
     if (!state.cbslDays || state.cbslDays > 90) {
-      // One tick per month (every 3rd month for long ranges), labelled at the month's first trading day.
-      const step = cb.length > 400 ? 3 : 1;
+      // One tick per month (every 3rd month for long ranges or narrow screens), at the month's first trading day.
+      const step = cb.length > 400 || isNarrow() ? 3 : 1;
       o.scales.x.ticks.autoSkip = false;
       o.scales.x.ticks.callback = (v, i) => {
         const d = cb[i].date, prev = i ? cb[i - 1].date : "";
@@ -377,17 +422,28 @@
   // ---------- wiring ----------
   function renderAll() {
     const s = snapshot();
+    document.title = `${state.cur}/LKR Bank Rates`;
+    $$(".cur-code").forEach((el) => (el.textContent = state.cur));
+    $("#table-title").textContent = `Today's ${state.cur} rates by bank`;
+    $("#today-date").textContent = s.latestDate ? longDate(s.latestDate) : "";
     renderTiles(s);
     renderTable(s);
     renderRange(s);
     renderBank();
     renderCbsl();
-    $("#today-date").textContent = s.latestDate ? longDate(s.latestDate) : "";
-    // Judge freshness from the data itself: several sources are only reachable from some runners.
+    // Freshness from the data itself: several sources are only reachable from some runners.
     const stale = s.list.filter((b) => b.stale).map((b) => b.short);
     const cbAgeDays = s.cbNow.date && s.latestDate ? (new Date(s.latestDate) - new Date(s.cbNow.date)) / 864e5 : 0;
     if (cbAgeDays > 4) stale.unshift("CBSL");
     $("#status-line").textContent = stale.length ? ` Not updated today: ${stale.join(", ")}.` : "";
+  }
+
+  function readHash() {
+    const p = new URLSearchParams(location.hash.slice(1));
+    return { cur: (p.get("cur") || "").toUpperCase(), bank: p.get("bank") };
+  }
+  function writeHash() {
+    history.replaceState(null, "", `#cur=${state.cur}&bank=${state.bank}`);
   }
 
   function segment(sel, onPick) {
@@ -398,8 +454,7 @@
   }
 
   function initTheme() {
-    let saved = null;
-    try { saved = localStorage.getItem("theme"); } catch (_) {}
+    const saved = store.get("theme");
     if (saved) document.documentElement.dataset.theme = saved;
     $("#theme").addEventListener("click", () => {
       const dark = document.documentElement.dataset.theme
@@ -407,7 +462,7 @@
         : matchMedia("(prefers-color-scheme: dark)").matches;
       const next = dark ? "light" : "dark";
       document.documentElement.dataset.theme = next;
-      try { localStorage.setItem("theme", next); } catch (_) {}
+      store.set("theme", next);
       if (state.db) renderAll();
     });
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.db && renderAll());
@@ -417,23 +472,28 @@
     initTheme();
     try {
       const res = await fetch("data/rates.json", { cache: "no-cache" });
-      state.db = await res.json();
+      state.db = normalize(await res.json());
     } catch (e) {
-      $("#updated").textContent = "Could not load data/rates.json — run the scraper first (see README).";
+      $("#updated").textContent = "Could not load data/rates.json. Run the scraper first (see README).";
       return;
     }
     const db = state.db;
     const updated = new Date(db.updated);
-    $("#updated").textContent = "Updated " + updated.toLocaleString("en-GB", { timeZone: "Asia/Colombo", dateStyle: "medium", timeStyle: "short" }) + " (Colombo time) · " + Object.keys(db.banks).length + " banks + CBSL";
+    $("#updated").textContent = "Updated " + updated.toLocaleString("en-GB", { timeZone: "Asia/Colombo", dateStyle: "medium", timeStyle: "short" })
+      + ` · ${Object.keys(db.banks).length} banks vs CBSL`;
 
+    const h = readHash();
+    const savedCur = store.get("cur");
+    state.cur = [h.cur, savedCur, "USD"].find((c) => c && db.currencies[c]) || Object.keys(db.currencies)[0];
+    state.bank = db.banks[h.bank] ? h.bank : Object.keys(db.banks)[0];
+
+    renderCurTabs();
     const sel = $("#bank-select");
     sel.innerHTML = Object.entries(db.banks).map(([id, b]) => `<option value="${id}">${esc(b.name)}</option>`).join("");
-    sel.addEventListener("change", () => selectBank(sel.value));
-    const fromHash = (location.hash.match(/bank=(\w+)/) || [])[1];
-    state.bank = db.banks[fromHash] ? fromHash : Object.keys(db.banks)[0];
     sel.value = state.bank;
+    sel.addEventListener("change", () => selectBank(sel.value));
 
-    segment(".controls .seg", (b) => { state.type = b.dataset.type; renderAll(); });
+    segment(".type-seg", (b) => { state.type = b.dataset.type; renderAll(); });
     segment("#range-seg", (b) => { state.days = +b.dataset.days; renderBank(); });
     segment("#cbsl-range-seg", (b) => { state.cbslDays = +b.dataset.days; renderCbsl(); });
     $$("#rates-table th[data-sort]").forEach((th) => th.addEventListener("click", () => {
@@ -442,6 +502,13 @@
       renderTable(snapshot());
     }));
     $("#csv").addEventListener("click", downloadCsv);
+    window.addEventListener("hashchange", () => {
+      const h2 = readHash();
+      if (db.currencies[h2.cur] && h2.cur !== state.cur) setCurrency(h2.cur);
+      if (db.banks[h2.bank] && h2.bank !== state.bank) selectBank(h2.bank);
+    });
+    let t;
+    window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(renderAll, 200); });
     renderAll();
   }
 
