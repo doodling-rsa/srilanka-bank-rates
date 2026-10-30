@@ -24,6 +24,9 @@ function Run {
 
 try {
     Log "start"
+    # Only publish from main; skip quietly if the folder is checked out on another branch.
+    $branch = (Run git rev-parse --abbrev-ref HEAD).Trim()
+    if ($branch -ne "main") { Log "skipped: on branch '$branch', not main"; exit 0 }
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         Run git fetch -q origin main | Out-Null
         Run git merge -q --ff-only origin/main | Out-Null

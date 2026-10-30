@@ -5,6 +5,8 @@ import time
 import requests
 from bs4 import BeautifulSoup
 
+from currencies import CURRENCIES
+
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
@@ -48,17 +50,24 @@ def soup(html):
     return BeautifulSoup(html, "html.parser")
 
 
-def table_row(html, label_re):
-    """Find the first <tr> whose label cells match label_re.
+def table_rows(html):
+    """Every <tr> on the page as a list of cell texts. Parse once, search many times."""
+    rows = []
+    for tr in soup(html).find_all("tr"):
+        cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+        if cells:
+            rows.append(cells)
+    return rows
 
-    Returns the list of rate cells after the label as floats (None for '-' / blanks),
+
+def find_row(rows, label_re):
+    """First row whose label cells match label_re.
+
+    Returns the rate cells after the label as floats (None for '-' / blanks),
     preserving column positions.
     """
     pat = re.compile(label_re, re.I)
-    for tr in soup(html).find_all("tr"):
-        cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
-        if not cells:
-            continue
+    for cells in rows:
         label_idx = [i for i, c in enumerate(cells) if re.search(r"[A-Za-z]", c)]
         if not any(pat.search(cells[i]) for i in label_idx):
             continue
@@ -69,10 +78,11 @@ def table_row(html, label_re):
     raise ValueError(f"row matching {label_re!r} not found")
 
 
-def sane(v, lo=150, hi=1000):
-    """Guard against parsing the wrong column: USD/LKR must be in a plausible band."""
+def sane(v, cur):
+    """Guard against parsing the wrong column: the rate must be in the currency's plausible band."""
     if v is None:
         return None
+    lo, hi = CURRENCIES[cur]["range"]
     if not lo <= v <= hi:
-        raise ValueError(f"implausible USD/LKR rate {v}")
+        raise ValueError(f"implausible {cur}/LKR rate {v}")
     return round(v, 4)
