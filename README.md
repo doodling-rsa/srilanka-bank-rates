@@ -1,12 +1,12 @@
 # LKR Bank Exchange Rates
 
-**Live site: https://doodling-rsa.github.io/usd-lkr-rates/**
+**Live site: https://doodling-rsa.github.io/srilanka-bank-rates/**
 
 A dashboard of daily **USD, GBP, AUD and SGD → LKR** buying and selling rates from Sri Lankan banks,
 compared against Central Bank of Sri Lanka (CBSL) rates. It's a static site with a Python scraper, hosted free on GitHub Pages.
 
 Pick a currency from the bar at the top; each tab also shows today's CBSL middle rate. Links keep your selection,
-e.g. `…/usd-lkr-rates/#cur=GBP&bank=hnb`.
+e.g. `…/srilanka-bank-rates/#cur=GBP&bank=hnb`.
 
 ## Reading the rates
 
