@@ -77,7 +77,8 @@ a { color: var(--accent); }
 /* ---------- Header ---------- */
 .topbar { background: var(--surface-1); border-bottom: 1px solid var(--border); }
 .topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
-h1 { font-size: 20px; margin: 0; letter-spacing: -0.015em; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.015em; display: flex; align-items: center; gap: 10px; }
+.logo { width: 26px; height: 26px; flex: none; }
 .sub { margin: 2px 0 0; color: var(--text-muted); font-size: 13px; }
 .icon-btn {
   flex: none; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);

@@ -422,7 +422,7 @@
   // ---------- wiring ----------
   function renderAll() {
     const s = snapshot();
-    document.title = `${state.cur}/LKR Bank Rates`;
+    document.title = `Sri Lanka Bank Rates · ${state.cur}`;
     $$(".cur-code").forEach((el) => (el.textContent = state.cur));
     $("#table-title").textContent = `Today's ${state.cur} rates by bank`;
     $("#today-date").textContent = s.latestDate ? longDate(s.latestDate) : "";

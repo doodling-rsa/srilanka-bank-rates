@@ -1,4 +1,4 @@
-# LKR Bank Exchange Rates
+# Sri Lanka Bank Rates
 
 **Live site: https://doodling-rsa.github.io/srilanka-bank-rates/**
 

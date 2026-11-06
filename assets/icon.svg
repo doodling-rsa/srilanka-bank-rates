@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Buy (up) and sell (down) arrows on the brand blue -->
+  <rect width="64" height="64" rx="14" fill="#2a78d6"/>
+  <path d="M22 11 L33 25 H26 V52 H18 V25 H11 Z" fill="#fff"/>
+  <path d="M42 53 L31 39 H38 V12 H46 V39 H53 Z" fill="#ffd4c2"/>
+</svg>
