@@ -1,5 +1,6 @@
 # Register a Windows scheduled task that runs local-update.ps1 at 10:00 and 15:00 every day.
-# Missed runs (PC asleep/off) run as soon as the PC is available again.
+# Missed runs (PC asleep/off) run as soon as the PC is available again,
+# and a failed run is retried up to 3 times, 15 minutes apart.
 # Re-run this script to update the task; remove it with:
 #   Unregister-ScheduledTask -TaskName "USD-LKR rates update" -Confirm:$false
 
@@ -14,7 +15,8 @@ $triggers = @(
     New-ScheduledTaskTrigger -Daily -At "15:00"
 )
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -MultipleInstances IgnoreNew
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -MultipleInstances IgnoreNew `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 15)
 # Interactive = runs as you while you're signed in, so git can use your saved GitHub credentials.
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
